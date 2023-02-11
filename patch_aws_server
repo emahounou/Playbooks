@@ -1,0 +1,48 @@
+- hosts: all
+  gather_facts: true
+  become: yes
+  handlers:
+  - name: rebooting instance and waiting for it to restart
+    reboot:
+      msg: "Reboot initiated by Ansible"
+      connect_timeout: 5
+      reboot_timeout: 600
+      pre_reboot_delay: 0
+      post_reboot_delay: 30
+      test_command: uptime
+
+  tasks:
+
+    - name: deregistering the instance from the appropriate target group
+      elb_target:
+        region: "{{ region }}"
+        target_group_name: "{{ target_group_name }}"
+        target_id: "{{target_id }}"
+        state: absent
+        target_status_timeout: 600
+      register: deregister
+      retries: 10
+      delay: 60
+      until: deregister.target_health_descriptions.target_health.state not in 'draining'
+
+    - name: updating the instance
+      yum:
+        name: '*'
+        state: latest
+        update_cache: yes
+      register: update_status
+      notify: rebooting instance and waiting for it to restart
+
+    - name: debug
+      debug: var=update_status
+
+    - name: registering the instance in the appropriate target group
+      elb_target:
+        region: "{{ region }}"
+        target_group_name: "{{ target_group_name }}"
+        target_id: "{{target_id }}"
+        state: present
+      register: register
+      retries: 10
+      delay: 30
+      until: register.target_health_descriptions.target_health.state in 'healthy'
